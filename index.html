@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GT vs Predicted — Data Diff Analyzer</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <header class="app-header">
+            <h1>GT vs Predicted — Data Diff Analyzer</h1>
+            <p class="subtitle">Upload a CSV or XLSX file to compare ground truth and predicted values</p>
+        </header>
+
+        <div class="upload-section">
+            <div class="upload-area" id="upload-area">
+                <input type="file" id="file-input" accept=".csv,.xlsx,.xls" />
+                <div class="upload-icon">📁</div>
+                <p class="upload-text">Drag &amp; drop a CSV or XLSX file here</p>
+                <p class="upload-hint">or click to browse</p>
+            </div>
+            <div id="file-info" class="file-info" style="display:none"></div>
+        </div>
+
+        <main id="main-content" style="display:none">
+
+            <!-- ========== Section 1: Data Cleanup ========== -->
+            <section class="collapsible-section" id="cleanup-section">
+                <div class="section-header" onclick="toggleSection('cleanup-section')">
+                    <div class="section-title">
+                        <span class="section-number">1</span>
+                        <h2>Data Cleanup</h2>
+                        <span class="section-badge" id="cleanup-badge">0 rules</span>
+                    </div>
+                    <span class="chevron">&#9662;</span>
+                </div>
+                <div class="section-body">
+                    <div class="cleanup-tabs">
+                        <button class="tab active" onclick="switchTab('skipempty')" data-tab="skipempty">
+                            &#9723; Skip Empty GT
+                        </button>
+                        <button class="tab" onclick="switchTab('ignore')" data-tab="ignore">
+                            &#128683; Ignore Rows
+                        </button>
+                        <button class="tab" onclick="switchTab('map')" data-tab="map">
+                            &#128260; Map Values
+                        </button>
+                        <button class="tab" onclick="switchTab('group')" data-tab="group">
+                            &#128230; Group Values
+                        </button>
+                    </div>
+
+                    <!-- Skip Empty GT Tab -->
+                    <div class="tab-panel active" id="tab-skipempty">
+                        <p class="tab-description">
+                            Skip the comparison for a field when the ground truth value is empty. The row is still included, but that field won't count as a match or mismatch.
+                        </p>
+                        <div class="rule-form">
+                            <div class="form-group">
+                                <label>Field</label>
+                                <select id="skipempty-field"></select>
+                            </div>
+                            <button class="btn btn-add" onclick="addSkipEmptyRule()">+ Add Rule</button>
+                        </div>
+                        <div class="rules-list" id="skipempty-rules"></div>
+                    </div>
+
+                    <!-- Ignore Tab -->
+                    <div class="tab-panel" id="tab-ignore">
+                        <p class="tab-description">
+                            Exclude rows from analysis where a ground truth field equals a specific value.
+                        </p>
+                        <div class="rule-form">
+                            <div class="form-group">
+                                <label>Field</label>
+                                <select id="ignore-field" onchange="updateIgnoreValues()"></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Value to ignore</label>
+                                <input type="text" id="ignore-value" list="ignore-values-list" placeholder="Enter value..." />
+                                <datalist id="ignore-values-list"></datalist>
+                            </div>
+                            <button class="btn btn-add" onclick="addIgnoreRule()">+ Add Rule</button>
+                        </div>
+                        <div class="rules-list" id="ignore-rules"></div>
+                    </div>
+
+                    <!-- Map Tab -->
+                    <div class="tab-panel" id="tab-map">
+                        <p class="tab-description">
+                            Transform ground truth values before comparison. The original value will be replaced with the new one.
+                        </p>
+                        <div class="rule-form">
+                            <div class="form-group">
+                                <label>Field</label>
+                                <select id="map-field" onchange="updateMapValues()"></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Original value</label>
+                                <input type="text" id="map-old" list="map-old-list" placeholder="Original..." />
+                                <datalist id="map-old-list"></datalist>
+                            </div>
+                            <div class="form-group">
+                                <label>Replace with</label>
+                                <input type="text" id="map-new" placeholder="New value..." />
+                            </div>
+                            <button class="btn btn-add" onclick="addMapRule()">+ Add Rule</button>
+                        </div>
+                        <div class="rules-list" id="map-rules"></div>
+                    </div>
+
+                    <!-- Group Tab -->
+                    <div class="tab-panel" id="tab-group">
+                        <p class="tab-description">
+                            Define equivalent value groups. When both GT and predicted values belong to the same group, they count as a match.<br>
+                            <em>Example: Group "sports_performance" with values "sports, performance" means gt=sports &amp; pred=performance is correct.</em>
+                        </p>
+                        <div class="rule-form">
+                            <div class="form-group">
+                                <label>Field</label>
+                                <select id="group-field"></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Group name</label>
+                                <input type="text" id="group-name" placeholder="e.g., sports_performance" />
+                            </div>
+                            <div class="form-group wide">
+                                <label>Equivalent values (comma-separated)</label>
+                                <input type="text" id="group-values" placeholder="e.g., sports, performance, athletic" />
+                            </div>
+                            <button class="btn btn-add" onclick="addGroupRule()">+ Add Rule</button>
+                        </div>
+                        <div class="rules-list" id="group-rules"></div>
+                    </div>
+
+                    <div class="cleanup-actions">
+                        <button class="btn btn-primary" onclick="applyAndRefresh()">
+                            Apply Rules &amp; Refresh Analysis
+                        </button>
+                        <button class="btn btn-cache" onclick="cacheRules()" title="Save rules to browser cache">
+                            &#128190; Save Rules
+                        </button>
+                        <button class="btn btn-cache" onclick="loadCachedRules()" title="Load rules from browser cache">
+                            &#128194; Load Saved
+                        </button>
+                        <button class="btn btn-cache-clear" onclick="clearCachedRules()" title="Clear saved rules from cache">
+                            &#128465; Clear Cache
+                        </button>
+                        <span class="cleanup-status" id="cleanup-status"></span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========== Section 2: Analytics & Heatmaps ========== -->
+            <section class="collapsible-section" id="analytics-section">
+                <div class="section-header" onclick="toggleSection('analytics-section')">
+                    <div class="section-title">
+                        <span class="section-number">2</span>
+                        <h2>Analytics &amp; Heatmaps</h2>
+                    </div>
+                    <span class="chevron">&#9662;</span>
+                </div>
+                <div class="section-body">
+                    <div class="summary-row" id="summary-cards"></div>
+                    <div class="charts-grid">
+                        <div class="chart-card">
+                            <h3>Per-Field Accuracy</h3>
+                            <canvas id="accuracy-chart"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <h3>Overall Match vs Mismatch</h3>
+                            <canvas id="overall-chart"></canvas>
+                        </div>
+                    </div>
+                    <h3 class="subsection-title">Value Distribution (Ground Truth vs Predicted)</h3>
+                    <div id="distribution-charts"></div>
+                    <h3 class="subsection-title">Confusion Matrix Heatmaps</h3>
+                    <p class="heatmap-hint">Click any cell to filter the Data Explorer below to matching products.</p>
+                    <div id="heatmaps-container"></div>
+                    <!-- Fullscreen overlay -->
+                    <div id="heatmap-fullscreen-overlay" class="heatmap-fullscreen-overlay" style="display:none">
+                        <div class="fullscreen-header">
+                            <h3 id="fullscreen-title"></h3>
+                            <button class="btn-close-fullscreen" onclick="closeHeatmapFullscreen()">&times; Close</button>
+                        </div>
+                        <div id="fullscreen-heatmap-content" class="fullscreen-heatmap-content"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========== Section 3: Data Explorer ========== -->
+            <section class="collapsible-section" id="explorer-section">
+                <div class="section-header" onclick="toggleSection('explorer-section')">
+                    <div class="section-title">
+                        <span class="section-number">3</span>
+                        <h2>Data Explorer</h2>
+                    </div>
+                    <span class="chevron">&#9662;</span>
+                </div>
+                <div class="section-body">
+                    <!-- Detail Panel -->
+                    <div id="detail-panel" class="detail-panel" style="display:none"></div>
+
+                    <!-- Filters -->
+                    <div class="explorer-controls">
+                        <input type="text" id="search-input" placeholder="Search by article name, number..." oninput="filterTable()" />
+                        <select id="match-filter" onchange="filterTable()">
+                            <option value="all">All Rows</option>
+                            <option value="match">Full Matches Only</option>
+                            <option value="mismatch">Has Mismatches</option>
+                        </select>
+                        <select id="field-filter" onchange="filterTable()">
+                            <option value="all">All Fields</option>
+                        </select>
+                        <span id="table-count" class="table-count"></span>
+                    </div>
+
+                    <!-- Table -->
+                    <div class="table-wrapper">
+                        <table id="data-table">
+                            <thead id="table-head"></thead>
+                            <tbody id="table-body"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div class="pagination" id="pagination"></div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
